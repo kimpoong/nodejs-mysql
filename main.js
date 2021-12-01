@@ -1,22 +1,11 @@
 var http = require('http');
-var fs = require('fs');
 var url = require('url');
 var qs = require('querystring');
-var mysql = require('mysql');
-
-var db = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: '626933',
-    database: 'nodejs'
-});
-
-db.connect();
+var db = require('./lib/db');
 
 var app = http.createServer((req, res) => {
     var queryData = url.parse(req.url, true).query;
     var pathname = url.parse(req.url, true).pathname;
-    
     if (pathname == '/') {
         var id = queryData.id;
         var title;
@@ -29,7 +18,6 @@ var app = http.createServer((req, res) => {
         ON author_id=author.id`,
         (err, topics) => {
             if (err) throw err;
-            console.log(topics);
             var list_html = '<ol>';
             topics.forEach((topic) => {
                 if (id == topic.id) {
@@ -92,25 +80,34 @@ var app = http.createServer((req, res) => {
         });
     }
     else if (pathname == '/create') {
-        var template = `
-        <!DOCTYPE html>
-        <html>
-            <head>
-                <title>Web-NodeJs:create</title>
-                <meta charset="utf-8">
-            </head>
-            <body>
-                <h1><a href="/">Web-NodeJs</a></h1>
-                <form action="/create_doc" method="post">
-                    <p><input type="text" name="title" placeholder="title"></p>
-                    <p><textarea name="description" placeholder="description"></textarea></p>
-                    <p><input type="submit"></p>
-                </form>
-            </body>
-        </html>
-        `;
-        res.writeHead(200);
-        res.end(template);
+        db.query(`SELECT id, name FROM author`, (err, results) => {
+            if (err) throw err;
+            var tag = `<select name="author">`;
+            results.forEach((result) => {
+                tag += `<option value="${result.id}">${result.name}</option>`;
+            });
+            tag += `</select>`;
+            var template = `
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    <title>Web-NodeJs:create</title>
+                    <meta charset="utf-8">
+                </head>
+                <body>
+                    <h1><a href="/">Web-NodeJs</a></h1>
+                    <form action="/create_doc" method="post">
+                        <p><input type="text" name="title" placeholder="title"></p>
+                        <p><textarea name="description" placeholder="description"></textarea></p>
+                        <p>${tag}</p>
+                        <p><input type="submit"></p>
+                    </form>
+                </body>
+            </html>
+            `;
+            res.writeHead(200);
+            res.end(template);
+        });
     }
     else if (pathname == '/create_doc') {
         var body = '';
@@ -121,7 +118,7 @@ var app = http.createServer((req, res) => {
             var post = qs.parse(body);
             db.query(`
             INSERT INTO topic (title, description, created, author_id)
-            VALUES (?, ?, NOW(), ?)`, [post.title, post.description, 1], (err, result) => {
+            VALUES (?, ?, NOW(), ?)`, [post.title, post.description, post.author], (err, result) => {
                 if (err) throw err;
                 res.writeHead(302, { Location: `/?id=${result.insertId}` });
                 res.end();
@@ -130,29 +127,39 @@ var app = http.createServer((req, res) => {
     }
     else if (pathname == '/update') {
         var id = queryData.id;
-        db.query(`SELECT title, description FROM topic WHERE id=?`, [id], (err, result) => {
+        db.query(`SELECT title, description, author_id FROM topic WHERE id=?`, [id], (err, topics) => {
             if (err) throw err;
-            console.log(result);
-            var template = `
-            <!DOCTYPE html>
-            <html>
-                <head>
-                    <title>Web-NodeJs:update</title>
-                    <meta charset="utf-8">
-                </head>
-                <body>
-                    <h1><a href="/">Web-NodeJs</a></h1>
-                    <form action="/update_doc" method="post">
-                        <input type="hidden" name="id" value="${id}">
-                        <p><input type="text" name="title" value="${result[0].title}"></p>
-                        <p><textarea name="description">${result[0].description}</textarea></p>
-                        <p><input type="submit"></p>
-                    </form>
-                </body>
-            </html>
-            `;
-            res.writeHead(200);
-            res.end(template);
+            var topic = topics[0];
+            db.query(`SELECT id, name FROM author`, (err, authors) => {
+                if (err) throw err;
+                var tag = `<select name="author">`;
+                authors.forEach((author) => {
+                    if (author.id == topic.author_id) tag += `<option value="${author.id}" selected>${author.name}</option>`;
+                    else tag += `<option value="${author.id}">${author.name}</option>`;
+                });
+                tag += `</select>`;
+                var template = `
+                <!DOCTYPE html>
+                <html>
+                    <head>
+                        <title>Web-NodeJs:update</title>
+                        <meta charset="utf-8">
+                    </head>
+                    <body>
+                        <h1><a href="/">Web-NodeJs</a></h1>
+                        <form action="/update_doc" method="post">
+                            <input type="hidden" name="id" value="${id}">
+                            <p><input type="text" name="title" value="${topic.title}"></p>
+                            <p><textarea name="description">${topic.description}</textarea></p>
+                            <p>${tag}</p>
+                            <p><input type="submit"></p>
+                        </form>
+                    </body>
+                </html>
+                `;
+                res.writeHead(200);
+                res.end(template);
+            });
         });
     }
     else if (pathname == '/update_doc') {
@@ -164,9 +171,9 @@ var app = http.createServer((req, res) => {
             var post = qs.parse(body);
             db.query(`
                 UPDATE topic
-                SET title=?, description=?, author_id=1
+                SET title=?, description=?, author_id=?
                 WHERE id=?`,
-            [post.title, post.description, post.id], (err, result) => {
+            [post.title, post.description, post.author, post.id], (err, result) => {
                 if (err) throw err;
                 res.writeHead(302, { Location: `/?id=${post.id}` });
                 res.end();
@@ -185,13 +192,13 @@ var app = http.createServer((req, res) => {
                 res.writeHead(302, { Location: '/' });
                 res.end();
             });
-        })
+        });
     }
     else {
         res.writeHead(404);
         res.end('not found');
     }
-    
 });
 
+db.connect();
 app.listen(3000);
